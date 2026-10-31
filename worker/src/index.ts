@@ -47,16 +47,19 @@ interface TelegramUpdate {
     from?: TelegramUser;
   };
 
-  callback_query?: {
-    id: string;
-    from: TelegramUser;
-    data?: string;
-    message?: {
-      chat: {
-        id: number;
-      };
+ 
+callback_query?: {
+  id: string;
+  from: TelegramUser;
+  data?: string;
+  message?: {
+    message_id: number;
+    chat: {
+      id: number;
     };
   };
+};
+
 }
 
 
@@ -147,6 +150,81 @@ async function sendCategoryKeyboard(
 }
 
 
+
+async function sendHistory(
+  env: Env,
+  chatId: number,
+  telegramId: number
+): Promise<void> {
+  const transactions = await getTransactionHistory(
+    env.DB,
+    telegramId
+  );
+
+  if (transactions.length === 0) {
+    await sendMessage(
+      env,
+      chatId,
+      "📋 История операций пока пуста."
+    );
+    return;
+  }
+
+  const lines = transactions.map((t) => {
+    const income = t.type === "income";
+    const amount = (t.amount_minor / 100)
+      .toLocaleString("ru-RU");
+
+    const date = t.created_at
+      .slice(5, 16)
+      .replace("-", ".");
+
+    return (
+      `${income ? "🟢" : "🔴"} ${t.category}\n` +
+      `     ${income ? "+" : "−"}${amount} ₽ · ${date}`
+    );
+  });
+
+  const text =
+    "📋 История операций\n\n" +
+    lines.join("\n\n") +
+    "\n\n👇 Выбери операцию для удаления:";
+
+  const buttons = transactions.map((t, index) => ({
+    text: `${index + 1}. ${t.category}`,
+    callback_data: `delete:${t.id}`
+  }));
+
+  const keyboard = [];
+
+  for (let i = 0; i < buttons.length; i += 2) {
+    keyboard.push(buttons.slice(i, i + 2));
+  }
+
+  const response = await fetch(
+    `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        reply_markup: {
+          inline_keyboard: keyboard
+        }
+      })
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error("Failed to send history");
+  }
+}
+
+
+
 async function handleTelegram(
   request: Request,
   env: Env
@@ -186,6 +264,87 @@ if (update.callback_query) {
       })
     }
   );
+
+if (chatId && callback.data?.startsWith("delete:")) {
+  const idText = callback.data.slice("delete:".length);
+  const transactionId = Number(idText);
+
+  if (
+    !/^[1-9]\d*$/.test(idText) ||
+    !Number.isSafeInteger(transactionId)
+  ) {
+    return new Response("OK");
+  }
+
+  const response = await fetch(
+    `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: "⚠️ Ты действительно хочешь удалить операцию?",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "✅ Да, удалить",
+                callback_data: `confirm_delete:${transactionId}`
+              },
+              {
+                text: "❌ Отмена",
+                callback_data: "cancel_delete"
+              }
+            ]
+          ]
+        }
+      })
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error("Failed to send deletion confirmation");
+  }
+
+  return new Response("OK");
+}
+
+if (chatId && callback.data === "cancel_delete") {
+  await sendMessage(env, chatId, "Удаление отменено.");
+  return new Response("OK");
+}
+
+if (chatId && callback.data?.startsWith("confirm_delete:")) {
+  const idText = callback.data.slice(
+    "confirm_delete:".length
+  );
+  const transactionId = Number(idText);
+
+  if (
+    !/^[1-9]\d*$/.test(idText) ||
+    !Number.isSafeInteger(transactionId)
+  ) {
+    return new Response("OK");
+  }
+
+  const deleted = await deleteTransaction(
+    env.DB,
+    callback.from.id,
+    transactionId
+  );
+
+  await sendMessage(
+    env,
+    chatId,
+    deleted
+      ? "✅ Операция успешно удалена."
+      : "❌ Операция не найдена или уже удалена."
+  );
+
+  return new Response("OK");
+}
 
   if (!chatId || !callback.data?.startsWith("category:")) {
     return new Response("OK");
@@ -371,49 +530,21 @@ if (command === "/balance") {
   return new Response("OK");
 }
 
+
 if (command === "/history") {
   if (!message.from) {
     return new Response("Sender not found", { status: 400 });
   }
 
-  const transactions = await getTransactionHistory(
-    env.DB,
+  await sendHistory(
+    env,
+    chatId,
     message.from.id
   );
 
-  if (transactions.length === 0) {
-    await sendMessage(
-      env,
-      chatId,
-      "📋 История операций пока пуста."
-    );
-
-    return new Response("OK");
-  }
-
-  const lines = transactions.map((transaction) => {
-    const isIncome = transaction.type === "income";
-    const icon = isIncome ? "🟢" : "🔴";
-    const sign = isIncome ? "+" : "−";
-
-    const amount = (transaction.amount_minor / 100)
-      .toLocaleString("ru-RU");
-
-    return (
-      `${icon} #${transaction.id} · ` +
-      `${sign}${amount} ${transaction.currency} · ` +
-      transaction.category
-    );
-  });
-
-  const reply =
-    "📋 Последние 10 операций:\n\n" +
-    lines.join("\n");
-
-  await sendMessage(env, chatId, reply);
-
   return new Response("OK");
 }
+
 
 if (command === "/delete") {
   if (!message.from) {
