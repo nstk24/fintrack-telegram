@@ -2,7 +2,9 @@
 import { useEffect, useState } from "react";
 import {
   authenticateTelegramUser,
-  type AuthenticatedUser
+  getFinanceSummary,
+  type AuthenticatedUser,
+  type FinanceSummary
 } from "./telegram";
 
 import {
@@ -97,6 +99,11 @@ function TransactionIcon({ name }: { name: string }) {
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("home");
 
+  const [financeSummary, setFinanceSummary] =
+  useState<FinanceSummary | null>(null);
+
+const [financeError, setFinanceError] = useState("");
+
   const [telegramUser, setTelegramUser] =
     useState<AuthenticatedUser | null>(null);
 
@@ -128,15 +135,34 @@ function App() {
   }, []);
 
 
-  const income = transactions
-    .filter((t) => t.type === "income")
-    .reduce((sum, t) => sum + t.amount, 0);
+useEffect(() => {
+  if (!telegramUser) return;
 
-  const expenses = transactions
-    .filter((t) => t.type === "expense")
-    .reduce((sum, t) => sum + t.amount, 0);
+  let active = true;
 
-  const balance = income - expenses;
+  getFinanceSummary()
+    .then((summary) => {
+      if (!active) return;
+      setFinanceSummary(summary);
+      setFinanceError("");
+    })
+    .catch((error: unknown) => {
+      if (!active) return;
+      setFinanceError(
+        error instanceof Error
+          ? error.message
+          : "Ошибка загрузки финансов"
+      );
+    });
+
+  return () => {
+    active = false;
+  };
+}, [telegramUser]);
+
+  const income = financeSummary?.income ?? 0;
+  const expenses = financeSummary?.expense ?? 0;
+  const balance = financeSummary?.balance ?? 0;
 
   const renderTransactions = (items: Transaction[]) => (
     <div className="transaction-list">
@@ -203,7 +229,13 @@ function App() {
                 
                 </h2>
               <p>{authStatus}</p>
-              <p>Финансовые данные пока демонстрационные</p>
+              <p>
+                  {financeError
+                  ? financeError
+                  : financeSummary
+                    ? "Финансовые данные из Cloudflare D1"
+                    : "Загрузка финансовых данных..."}                  
+              </p>
             </div>
 
             <section className="balance-card">
