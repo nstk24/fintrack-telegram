@@ -127,3 +127,55 @@ export async function getFinanceTransactions(): Promise<ApiTransaction[]> {
 
   return data.transactions;
 }
+
+
+export type NewTransaction = {
+  type: "income" | "expense";
+  amount_minor: number;
+  category: string;
+  client_request_id: string;
+};
+
+export async function createFinanceTransaction(
+  transaction: NewTransaction
+): Promise<"saved" | "duplicate"> {
+  const webApp = getTelegramWebApp();
+
+  if (!webApp?.initData) {
+    throw new Error("Нет данных авторизации Telegram");
+  }
+
+  const response = await fetch(
+    "https://fintrack-api.nstk24.workers.dev/api/finance/transactions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `tma ${webApp.initData}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(transaction)
+    }
+  );
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error(
+        "Авторизация устарела. Закрой и открой Mini App заново."
+      );
+    }
+
+    if (response.status === 409) {
+      throw new Error("Конфликт идентификатора операции");
+    }
+
+    throw new Error(
+      `Не удалось сохранить операцию: ${response.status}`
+    );
+  }
+
+  const result = (await response.json()) as {
+    status: "saved" | "duplicate";
+  };
+
+  return result.status;
+}

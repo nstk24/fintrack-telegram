@@ -1,4 +1,4 @@
-
+import TransactionForm from "./TransactionForm";
 import { useEffect, useState } from "react";
 import {
   authenticateTelegramUser,
@@ -56,6 +56,8 @@ function TransactionIcon({ name }: { name: string }) {
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("home");
+  const [showTransactionForm, setShowTransactionForm] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState("");
@@ -118,7 +120,7 @@ useEffect(() => {
   return () => {
     active = false;
   };
-}, [telegramUser]);
+}, [telegramUser, refreshKey]);
 
 
 useEffect(() => {
@@ -165,7 +167,7 @@ useEffect(() => {
   return () => {
     active = false;
   };
-}, [telegramUser]);
+}, [telegramUser, refreshKey]);
 
 
   const income = financeSummary?.income ?? 0;
@@ -301,12 +303,12 @@ useEffect(() => {
             <div className="quick-actions">
               <button
                 type="button"
-                onClick={() => setActiveTab("finance")}
+                onClick={() => setShowTransactionForm(true)}
               >
                 <span className="quick-action-icon">
                   <Plus size={20} />
                 </span>
-                <span>Операции</span>
+                <span>Добавить</span>
               </button>
 
               <button
@@ -355,6 +357,13 @@ useEffect(() => {
               <h2>Мои финансы</h2>
               <p>История доходов и расходов</p>
             </div>
+              <button
+              type="button"
+              className="form-submit"
+              onClick={() => setShowTransactionForm(true)}
+            >
+              + Добавить доход или расход
+            </button>
 
             <div className="summary-card">
               <span>Финансовый результат</span>
@@ -462,6 +471,15 @@ useEffect(() => {
           );
         })}
       </nav>
+      {showTransactionForm && (
+      <TransactionForm
+      onClose={() => setShowTransactionForm(false)}
+      onSaved={() => {
+      setShowTransactionForm(false);
+      setRefreshKey((value) => value + 1);
+      }}
+      />
+      )}
     </div>
   );
 }

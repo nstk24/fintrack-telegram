@@ -1,3 +1,4 @@
+import { addMiniAppTransaction } from "./miniapp-transactions";
 import { validateTelegramInitData } from "./auth";
 import { registerUser, type TelegramUser } from "./db";
 
@@ -758,7 +759,7 @@ export default {
 
     const corsHeaders = {
       "Access-Control-Allow-Origin": "https://fintrack-app-4tt.pages.dev",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Authorization, Content-Type",
       "Vary": "Origin"
     };
@@ -874,17 +875,20 @@ export default {
 
 
     // История операций авторизованного пользователя
+   
+    // Получение и создание финансовых операций
     if (url.pathname === "/api/finance/transactions") {
-      if (request.method !== "GET") {
+      if (request.method !== "GET" && request.method !== "POST") {
         return Response.json(
           { error: "Method not allowed" },
           {
             status: 405,
-            headers: { ...corsHeaders, Allow: "GET" }
+            headers: { ...corsHeaders, Allow: "GET, POST" }
           }
         );
       }
 
+      // Авторизация Telegram
       const initData = request.headers
         .get("Authorization")
         ?.replace(/^tma\s+/i, "");
@@ -908,17 +912,116 @@ export default {
         );
       }
 
-      const transactions = await getTransactionHistory(
+      // GET: возвращаем историю пользователя
+      if (request.method === "GET") {
+        const transactions = await getTransactionHistory(
+          env.DB,
+          user.id,
+          10
+        );
+
+        return Response.json(
+          { transactions },
+          { headers: corsHeaders }
+        );
+      }
+
+      // POST: создаём новую операцию
+      if (!request.headers.get("Content-Type")
+        ?.toLowerCase().startsWith("application/json")) {
+        return Response.json(
+          { error: "Content-Type must be application/json" },
+          { status: 415, headers: corsHeaders }
+        );
+      }
+
+      let body: unknown;
+
+      try {
+        body = await request.json();
+      } catch {
+        return Response.json(
+          { error: "Invalid JSON" },
+          { status: 400, headers: corsHeaders }
+        );
+      }
+
+      if (typeof body !== "object" || body === null) {
+        return Response.json(
+          { error: "Invalid request body" },
+          { status: 400, headers: corsHeaders }
+        );
+      }
+
+      const data = body as Record<string, unknown>;
+
+      const valid =
+        (data.type === "income" || data.type === "expense") &&
+        typeof data.amount_minor === "number" &&
+        Number.isSafeInteger(data.amount_minor) &&
+        data.amount_minor > 0 &&
+        data.amount_minor <= 100_000_000_000 &&
+        typeof data.category === "string" &&
+        data.category.trim().length > 0 &&
+        data.category.length <= 100 &&
+        typeof data.client_request_id === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+          .test(data.client_request_id);
+
+      if (!valid) {
+        return Response.json(
+          { error: "Invalid transaction data" },
+          { status: 400, headers: corsHeaders }
+        );
+      }
+
+      // После валидации приводим данные к нужным типам.
+      const transactionType = data.type as "income" | "expense";
+      const amountMinor = data.amount_minor as number;
+      const category = (data.category as string).trim();
+      const clientRequestId = data.client_request_id as string;
+
+      // Регистрируем пользователя, если он ещё не создан.
+      await registerUser(env.DB, user);
+
+      const result = await addMiniAppTransaction(
         env.DB,
         user.id,
-        10
+        {
+          type: transactionType,
+          amount_minor: amountMinor,
+          category,
+          client_request_id: clientRequestId
+        }
       );
 
+      if (result === "saved") {
+        return Response.json(
+          { status: "saved" },
+          { status: 201, headers: corsHeaders }
+        );
+      }
+
+      if (result === "duplicate") {
+        return Response.json(
+          { status: "duplicate" },
+          { headers: corsHeaders }
+        );
+      }
+
+      if (result === "conflict") {
+        return Response.json(
+          { error: "Request ID already used for another transaction" },
+          { status: 409, headers: corsHeaders }
+        );
+      }
+
       return Response.json(
-        { transactions },
-        { headers: corsHeaders }
+        { error: "User not found" },
+        { status: 404, headers: corsHeaders }
       );
     }
+
 
     if (url.pathname === "/health" &&
         request.method === "GET") {
