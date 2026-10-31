@@ -1,4 +1,11 @@
 import { registerUser, type TelegramUser } from "./db";
+
+import {
+  addTransaction,
+  getTransactionSummary,
+  type TransactionType
+} from "./transactions";
+
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET: string;
@@ -89,17 +96,94 @@ if (message.from) {
 
   let reply: string;
 
+  
+if (command === "/expense" || command === "/income") {
+  if (!message.from) {
+    return new Response("Sender not found", { status: 400 });
+  }
+
+  const parts = message.text.trim().split(/\s+/);
+  const amountText = parts[1]?.replace(",", ".");
+  const amount = Number(amountText);
+  const category = parts.slice(2).join(" ").trim();
+
+  if (
+    !amountText ||
+    !Number.isFinite(amount) ||
+    amount <= 0 ||
+    !/^\d+(?:[.,]\d{1,2})?$/.test(parts[1] ?? "") ||
+    !category ||
+    category.length > 100
+  ) {
+    await sendMessage(
+      env,
+      chatId,
+      "⚠️ Неверный формат.\n\n" +
+      "Примеры:\n" +
+      "/expense 350 Продукты\n" +
+      "/income 25000 Зарплата"
+    );
+
+    return new Response("OK");
+  }
+
+  const type: TransactionType =
+    command === "/expense" ? "expense" : "income";
+
+  const saved = await addTransaction(
+    env.DB,
+    message.from.id,
+    type,
+    amount,
+    category
+  );
+
+  const reply = saved
+    ? `✅ ${type === "expense" ? "Расход" : "Доход"} сохранён!\n\n` +
+      `💰 Сумма: ${amount.toLocaleString("ru-RU")} ₽\n` +
+      `📁 Категория: ${category}`
+    : "❌ Не удалось сохранить операцию.";
+
+  await sendMessage(env, chatId, reply);
+
+  return new Response("OK");
+}
+
+if (command === "/balance") {
+  if (!message.from) {
+    return new Response("Sender not found", { status: 400 });
+  }
+
+  const summary = await getTransactionSummary(
+    env.DB,
+    message.from.id
+  );
+
+  await sendMessage(
+    env,
+    chatId,
+    "📊 Ваши финансы (за всё время)\n\n" +
+    `🟢 Доходы: ${summary.income.toLocaleString("ru-RU")} ₽\n` +
+    `🔴 Расходы: ${summary.expense.toLocaleString("ru-RU")} ₽\n` +
+    `💰 Баланс: ${summary.balance.toLocaleString("ru-RU")} ₽`
+  );
+
+  return new Response("OK");
+}
+
   switch (command) {
-    case "/start":
-      reply =
-        `Привет, ${message.from?.first_name || "друг"}! 👋\n\n` +
-        "Добро пожаловать в FinTrack! 💰\n\n" +
-        "Здесь ты сможешь:\n" +
-        "💵 Отслеживать курсы валют\n" +
-        "₿ Следить за криптовалютами\n" +
-        "📊 Учитывать доходы и расходы\n\n" +
-        "Для списка команд отправь /help";
-      break;
+    case "/help":
+  reply =
+    "📋 Команды FinTrack:\n\n" +
+    "/start — Главное меню\n" +
+    "/help — Помощь\n" +
+    "/rates — Курсы валют\n" +
+    "/crypto — Криптовалюты\n\n" +
+    "💰 Личные финансы:\n" +
+    "/expense 350 Продукты — Добавить расход\n" +
+    "/income 25000 Зарплата — Добавить доход\n" +
+    "/balance — Финансовая сводка";
+     break;
 
     case "/help":
       reply =
