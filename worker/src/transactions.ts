@@ -132,3 +132,28 @@ export async function getTransactionHistory(
 
   return result.results;
 }
+
+
+export async function deleteTransaction(
+  db: D1Database,
+  telegramId: number,
+  transactionId: number
+): Promise<boolean> {
+  if (!Number.isSafeInteger(transactionId) || transactionId <= 0) {
+    return false;
+  }
+
+  const result = await db.prepare(`
+    DELETE FROM transactions
+    WHERE id = ?
+      AND user_id = (
+        SELECT id
+        FROM users
+        WHERE telegram_id = ?
+      )
+  `)
+    .bind(transactionId, telegramId)
+    .run();
+
+  return result.meta.changes === 1;
+}

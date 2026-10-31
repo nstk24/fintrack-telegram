@@ -1,12 +1,13 @@
 import { registerUser, type TelegramUser } from "./db";
 
-
 import {
   addTransaction,
   getTransactionSummary,
   getTransactionHistory,
+  deleteTransaction,
   type TransactionType
 } from "./transactions";
+
 
 
 interface Env {
@@ -226,6 +227,48 @@ if (command === "/history") {
   return new Response("OK");
 }
 
+if (command === "/delete") {
+  if (!message.from) {
+    return new Response("Sender not found", { status: 400 });
+  }
+
+  const parts = message.text.trim().split(/\s+/);
+  const idText = parts[1] ?? "";
+  const transactionId = Number(idText);
+
+  if (
+    parts.length !== 2 ||
+    !/^[1-9]\d*$/.test(idText) ||
+    !Number.isSafeInteger(transactionId)
+  ) {
+    await sendMessage(
+      env,
+      chatId,
+      "⚠️ Укажи корректный ID операции.\n\n" +
+      "Пример: /delete 3\n\n" +
+      "Посмотреть ID можно через /history."
+    );
+
+    return new Response("OK");
+  }
+
+  const deleted = await deleteTransaction(
+    env.DB,
+    message.from.id,
+    transactionId
+  );
+
+  await sendMessage(
+    env,
+    chatId,
+    deleted
+      ? `✅ Операция #${transactionId} удалена.`
+      : "❌ Операция не найдена или у тебя нет доступа к ней."
+  );
+
+  return new Response("OK");
+}
+
   switch (command) {
     case "/help":
   reply =
@@ -238,7 +281,8 @@ if (command === "/history") {
     "/expense 350 Продукты — Добавить расход\n" +
     "/income 25000 Зарплата — Добавить доход\n" +
     "/balance — Финансовая сводка\n" +
-    "/history — Последние 10 операций";
+    "/history — Последние 10 операций\n" +
+    "/delete 3 — Удалить операцию по ID";
      break;
 
     case "/rates":
