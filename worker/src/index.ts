@@ -1,8 +1,10 @@
-
+import { registerUser, type TelegramUser } from "./db";
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET: string;
+  DB: D1Database;
 }
+
 
 interface TelegramUpdate {
   update_id: number;
@@ -11,11 +13,10 @@ interface TelegramUpdate {
     chat: {
       id: number;
     };
-    from?: {
-      first_name?: string;
-    };
+    from?: TelegramUser;
   };
 }
+
 
 async function sendMessage(
   env: Env,
@@ -74,9 +75,17 @@ async function handleTelegram(
     return new Response("OK");
   }
 
-  const chatId = message.chat.id;
-  const command = message.text.trim().split(/\s+/)[0]
-    .split("@")[0].toLowerCase();
+
+const chatId = message.chat.id;
+
+const command = message.text.trim().split(/\s+/)[0]
+  .split("@")[0].toLowerCase();
+
+// Регистрируем пользователя или обновляем его данные
+if (message.from) {
+  await registerUser(env.DB, message.from);
+}
+
 
   let reply: string;
 
