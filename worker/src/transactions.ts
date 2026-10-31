@@ -7,36 +7,63 @@ export interface TransactionSummary {
   balance: number;
 }
 
+
 export async function addTransaction(
   db: D1Database,
   telegramId: number,
+  updateId: number,
   type: TransactionType,
   amountRub: number,
   category: string
-): Promise<boolean> {
+): Promise<"saved" | "duplicate" | "error"> {
   if (
-    !Number.isSafeInteger(amountRub * 100) ||
+    !Number.isSafeInteger(Math.round(amountRub * 100)) ||
     amountRub <= 0 ||
     !category.trim()
   ) {
-    return false;
+    return "error";
   }
 
   const amountMinor = Math.round(amountRub * 100);
 
   const result = await db.prepare(`
     INSERT INTO transactions (
-      user_id, type, amount_minor, currency, category
+      user_id,
+      type,
+      amount_minor,
+      currency,
+      category,
+      telegram_update_id
     )
-    SELECT id, ?, ?, 'RUB', ?
+    SELECT id, ?, ?, 'RUB', ?, ?
     FROM users
     WHERE telegram_id = ?
+    ON CONFLICT(telegram_update_id) DO NOTHING
   `)
-    .bind(type, amountMinor, category.trim(), telegramId)
+    .bind(
+      type,
+      amountMinor,
+      category.trim(),
+      updateId,
+      telegramId
+    )
     .run();
 
-  return result.meta.changes === 1;
+  if (result.meta.changes === 1) {
+    return "saved";
+  }
+
+  const existing = await db.prepare(`
+    SELECT id
+    FROM transactions
+    WHERE telegram_update_id = ?
+  `)
+    .bind(updateId)
+    .first<{ id: number }>();
+
+  return existing ? "duplicate" : "error";
 }
+
 
 export async function getTransactionSummary(
   db: D1Database,

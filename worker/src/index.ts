@@ -130,19 +130,27 @@ if (command === "/expense" || command === "/income") {
   const type: TransactionType =
     command === "/expense" ? "expense" : "income";
 
-  const saved = await addTransaction(
-    env.DB,
-    message.from.id,
-    type,
-    amount,
-    category
-  );
+ 
+const result = await addTransaction(
+  env.DB,
+  message.from.id,
+  update.update_id,
+  type,
+  amount,
+  category
+);
 
-  const reply = saved
+
+ 
+const reply =
+  result === "saved"
     ? `✅ ${type === "expense" ? "Расход" : "Доход"} сохранён!\n\n` +
       `💰 Сумма: ${amount.toLocaleString("ru-RU")} ₽\n` +
       `📁 Категория: ${category}`
-    : "❌ Не удалось сохранить операцию.";
+    : result === "duplicate"
+      ? "ℹ️ Эта операция уже была обработана."
+      : "❌ Не удалось сохранить операцию.";
+
 
   await sendMessage(env, chatId, reply);
 
