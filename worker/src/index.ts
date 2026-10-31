@@ -765,7 +765,11 @@ export default {
 
     // Браузер предварительно проверяет разрешение на запрос.
     if (
-     ["/api/me", "/api/finance/summary"].includes(url.pathname) &&
+       [
+      "/api/me",
+       "/api/finance/summary",
+      "/api/finance/transactions"
+      ].includes(url.pathname) &&
      request.method === "OPTIONS"
     ) {
       return new Response(null, {
@@ -864,6 +868,54 @@ export default {
           balance: summary.balance,
           currency: "RUB"
         },
+        { headers: corsHeaders }
+      );
+    }
+
+
+    // История операций авторизованного пользователя
+    if (url.pathname === "/api/finance/transactions") {
+      if (request.method !== "GET") {
+        return Response.json(
+          { error: "Method not allowed" },
+          {
+            status: 405,
+            headers: { ...corsHeaders, Allow: "GET" }
+          }
+        );
+      }
+
+      const initData = request.headers
+        .get("Authorization")
+        ?.replace(/^tma\s+/i, "");
+
+      if (!initData) {
+        return Response.json(
+          { error: "Telegram authorization required" },
+          { status: 401, headers: corsHeaders }
+        );
+      }
+
+      const user = await validateTelegramInitData(
+        initData,
+        env.TELEGRAM_BOT_TOKEN
+      );
+
+      if (!user) {
+        return Response.json(
+          { error: "Invalid or expired Telegram authorization" },
+          { status: 401, headers: corsHeaders }
+        );
+      }
+
+      const transactions = await getTransactionHistory(
+        env.DB,
+        user.id,
+        10
+      );
+
+      return Response.json(
+        { transactions },
         { headers: corsHeaders }
       );
     }

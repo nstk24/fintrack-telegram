@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   authenticateTelegramUser,
   getFinanceSummary,
+  getFinanceTransactions,
   type AuthenticatedUser,
   type FinanceSummary
 } from "./telegram";
@@ -38,49 +39,6 @@ type Transaction = {
   date: string;
 };
 
-const transactions: Transaction[] = [
-  {
-    id: 1,
-    name: "Зарплата",
-    category: "Работа",
-    amount: 25000,
-    type: "income",
-    date: "31 октября"
-  },
-  {
-    id: 2,
-    name: "Продукты",
-    category: "Покупки",
-    amount: 350,
-    type: "expense",
-    date: "31 октября"
-  },
-  {
-    id: 3,
-    name: "Подработка",
-    category: "Дополнительный доход",
-    amount: 500,
-    type: "income",
-    date: "30 октября"
-  },
-  {
-    id: 4,
-    name: "Кофе",
-    category: "Кафе",
-    amount: 220,
-    type: "expense",
-    date: "30 октября"
-  },
-  {
-    id: 5,
-    name: "Метро",
-    category: "Транспорт",
-    amount: 90,
-    type: "expense",
-    date: "29 октября"
-  }
-];
-
 const formatMoney = (amount: number) =>
   amount.toLocaleString("ru-RU", {
     minimumFractionDigits: 0,
@@ -98,7 +56,9 @@ function TransactionIcon({ name }: { name: string }) {
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("home");
-
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState("");
   const [financeSummary, setFinanceSummary] =
   useState<FinanceSummary | null>(null);
 
@@ -160,9 +120,77 @@ useEffect(() => {
   };
 }, [telegramUser]);
 
+
+useEffect(() => {
+  if (!telegramUser) return;
+
+  let active = true;
+
+  getFinanceTransactions()
+    .then((items) => {
+      if (!active) return;
+
+      const formatted: Transaction[] = items.map((item) => {
+        const dateParts = item.created_at.slice(0, 10).split("-");
+
+        return {
+          id: item.id,
+          name: item.category,
+          category: item.type === "income" ? "Доход" : "Расход",
+          amount: item.amount_minor / 100,
+          type: item.type,
+          date:
+            dateParts.length === 3
+              ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}`
+              : item.created_at
+        };
+      });
+
+      setTransactions(formatted);
+      setHistoryError("");
+    })
+    .catch((error: unknown) => {
+      if (!active) return;
+
+      setHistoryError(
+        error instanceof Error
+          ? error.message
+          : "Не удалось получить историю"
+      );
+    })
+    .finally(() => {
+      if (active) setHistoryLoading(false);
+    });
+
+  return () => {
+    active = false;
+  };
+}, [telegramUser]);
+
+
   const income = financeSummary?.income ?? 0;
   const expenses = financeSummary?.expense ?? 0;
   const balance = financeSummary?.balance ?? 0;
+  const renderHistoryStatus = () => {
+  if (!telegramUser) {
+    return <div className="demo-notice">Ожидаем авторизацию Telegram.</div>;
+  }
+
+  if (historyLoading) {
+    return <div className="demo-notice">Загружаем операции...</div>;
+  }
+
+  if (historyError) {
+    return <div className="demo-notice">{historyError}</div>;
+  }
+
+  if (transactions.length === 0) {
+    return <div className="demo-notice">Операций пока нет.</div>;
+  }
+
+  return null;
+};
+
 
   const renderTransactions = (items: Transaction[]) => (
     <div className="transaction-list">
@@ -314,13 +342,10 @@ useEffect(() => {
                 </button>
               </div>
 
-              {renderTransactions(transactions.slice(0, 4))}
+              {renderHistoryStatus()}
+              {!historyLoading && !historyError &&
+                renderTransactions(transactions.slice(0, 4))}
             </section>
-
-            <div className="demo-notice">
-              Данные на экране пока демонстрационные.
-              Синхронизацию с Telegram подключим позже.
-            </div>
           </>
         )}
 
@@ -340,7 +365,9 @@ useEffect(() => {
               <h3>Все операции</h3>
             </div>
 
-            {renderTransactions(transactions)}
+            {renderHistoryStatus()}
+            {!historyLoading && !historyError &&
+              renderTransactions(transactions)}
 
             <div className="demo-notice">
               Добавление и удаление операций подключим

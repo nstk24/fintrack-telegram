@@ -87,3 +87,43 @@ export async function getFinanceSummary(): Promise<FinanceSummary> {
 
   return (await response.json()) as FinanceSummary;
 }
+
+
+export type ApiTransaction = {
+  id: number;
+  type: "income" | "expense";
+  amount_minor: number;
+  currency: string;
+  category: string;
+  created_at: string;
+};
+
+export async function getFinanceTransactions(): Promise<ApiTransaction[]> {
+  const webApp = getTelegramWebApp();
+
+  if (!webApp?.initData) {
+    throw new Error("Нет данных авторизации Telegram");
+  }
+
+  const response = await fetch(
+    "https://fintrack-api.nstk24.workers.dev/api/finance/transactions",
+    {
+      method: "GET",
+      headers: {
+        Authorization: `tma ${webApp.initData}`
+      }
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Не удалось загрузить историю: ${response.status}`
+    );
+  }
+
+  const data = (await response.json()) as {
+    transactions: ApiTransaction[];
+  };
+
+  return data.transactions;
+}
