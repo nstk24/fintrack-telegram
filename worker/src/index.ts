@@ -9,12 +9,23 @@ import {
 } from "./transactions";
 
 
+
 import {
   getSession,
   startSession,
   setSessionAmount,
-  cancelSession
+  cancelSession,
+  finishSession
 } from "./sessions";
+
+
+
+import {
+  getCategory,
+  createCategoryKeyboard
+} from "./categories";
+
+
 
 
 interface Env {
@@ -24,8 +35,10 @@ interface Env {
 }
 
 
+
 interface TelegramUpdate {
   update_id: number;
+
   message?: {
     text?: string;
     chat: {
@@ -33,7 +46,19 @@ interface TelegramUpdate {
     };
     from?: TelegramUser;
   };
+
+  callback_query?: {
+    id: string;
+    from: TelegramUser;
+    data?: string;
+    message?: {
+      chat: {
+        id: number;
+      };
+    };
+  };
 }
+
 
 
 const mainKeyboard = {
@@ -95,6 +120,33 @@ async function sendMessage(
   }
 }
 
+
+async function sendCategoryKeyboard(
+  env: Env,
+  chatId: number,
+  type: TransactionType
+): Promise<void> {
+  const response = await fetch(
+    `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: "📁 Выбери категорию:",
+        reply_markup: createCategoryKeyboard(type)
+      })
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error("Failed to send category keyboard");
+  }
+}
+
+
 async function handleTelegram(
   request: Request,
   env: Env
@@ -116,11 +168,97 @@ async function handleTelegram(
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  const message = update.message;
+  
+if (update.callback_query) {
+  const callback = update.callback_query;
+  const chatId = callback.message?.chat.id;
 
-  if (!message?.text) {
+  // Подтверждаем нажатие кнопки Telegram
+  await fetch(
+    `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        callback_query_id: callback.id
+      })
+    }
+  );
+
+  if (!chatId || !callback.data?.startsWith("category:")) {
     return new Response("OK");
   }
+
+  const parts = callback.data.split(":");
+  const type = parts[1];
+  const indexText = parts[2] ?? "";
+
+  if (
+    parts.length !== 3 ||
+    (type !== "income" && type !== "expense") ||
+    !/^\d+$/.test(indexText)
+  ) {
+    return new Response("OK");
+  }
+
+  const category = getCategory(type, Number(indexText));
+  const telegramId = callback.from.id;
+
+  const session = await getSession(env.DB, telegramId);
+
+  if (
+    !category ||
+    !session ||
+    session.step !== "waiting_category" ||
+    session.operation_type !== type ||
+    session.amount_minor === null
+  ) {
+    await sendMessage(
+      env,
+      chatId,
+      "⚠️ Этот выбор уже неактуален. Начни добавление заново."
+    );
+    return new Response("OK");
+  }
+
+  const amount = session.amount_minor / 100;
+
+  const result = await finishSession(
+    env.DB,
+    telegramId,
+    update.update_id,
+    category
+  );
+
+  
+
+  if (result === "saved") {
+    await sendMessage(
+      env,
+      chatId,
+      `✅ ${type === "income" ? "Доход" : "Расход"} сохранён!\n\n` +
+      `💰 Сумма: ${amount.toLocaleString("ru-RU")} ₽\n` +
+      `📁 Категория: ${category}`
+    );
+  } else if (result === "error") {
+    await sendMessage(
+      env,
+      chatId,
+      "⚠️ Не удалось сохранить операцию."
+    );
+  }
+
+  return new Response("OK");
+}
+
+const message = update.message;
+
+if (!message?.text) {
+  return new Response("OK");
+}
+
 
 
 
@@ -376,7 +514,7 @@ if (
   if (session?.step === "waiting_amount") {
     const amountText = messageText.replace(",", ".");
 
-    if (!/^\d+(?:\.\d{1,2})?$/.test(amountText)) {
+    if (!/^\d+(?:\.\d{1,2})?$/.test(amountText)) {  
       await sendMessage(
         env,
         chatId,
@@ -406,14 +544,27 @@ if (
       amountMinor
     );
 
-    await sendMessage(
-      env,
-      chatId,
-      saved
-        ? `✅ Сумма ${amount.toLocaleString("ru-RU")} ₽ принята!\n\n` +
-          "Следующий шаг — выбор категории."
-        : "❌ Не удалось сохранить сумму."
-    );
+    
+if (saved) {
+  await sendMessage(
+    env,
+    chatId,
+    `✅ Сумма ${amount.toLocaleString("ru-RU")} ₽ принята!`
+  );
+
+  await sendCategoryKeyboard(
+    env,
+    chatId,
+    session.operation_type
+  );
+} else {
+  await sendMessage(
+    env,
+    chatId,
+    "❌ Не удалось сохранить сумму."
+  );
+}
+
 
     return new Response("OK");
   }

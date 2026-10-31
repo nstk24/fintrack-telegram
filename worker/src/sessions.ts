@@ -96,3 +96,74 @@ export async function cancelSession(
     .bind(telegramId)
     .run();
 }
+
+
+export async function finishSession(
+  db: D1Database,
+  telegramId: number,
+  updateId: number,
+  category: string
+): Promise<
+  "saved" | "duplicate" | "error"
+> {
+  if (
+    !Number.isSafeInteger(updateId) ||
+    !category.trim()
+  ) {
+    return "error";
+  }
+
+  const insert = db.prepare(`
+    INSERT INTO transactions (
+      user_id,
+      type,
+      amount_minor,
+      currency,
+      category,
+      telegram_update_id
+    )
+    SELECT
+      s.user_id,
+      s.operation_type,
+      s.amount_minor,
+      'RUB',
+      ?,
+      ?
+    FROM user_sessions s
+    JOIN users u ON s.user_id = u.id
+    WHERE u.telegram_id = ?
+      AND s.step = 'waiting_category'
+      AND s.amount_minor > 0
+    ON CONFLICT(telegram_update_id) DO NOTHING
+  `).bind(category, updateId, telegramId);
+
+  const removeSession = db.prepare(`
+    DELETE FROM user_sessions
+    WHERE user_id = (
+      SELECT id FROM users WHERE telegram_id = ?
+    )
+    AND step = 'waiting_category'
+    AND EXISTS (
+      SELECT 1 FROM transactions
+      WHERE telegram_update_id = ?
+    )
+  `).bind(telegramId, updateId);
+
+  const results = await db.batch([
+    insert,
+    removeSession
+  ]);
+
+  if (results[0].meta.changes === 1) {
+    return "saved";
+  }
+
+  const existing = await db.prepare(`
+    SELECT id FROM transactions
+    WHERE telegram_update_id = ?
+  `)
+    .bind(updateId)
+    .first<{ id: number }>();
+
+  return existing ? "duplicate" : "error";
+}
