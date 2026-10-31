@@ -9,6 +9,13 @@ import {
 } from "./transactions";
 
 
+import {
+  getSession,
+  startSession,
+  setSessionAmount,
+  cancelSession
+} from "./sessions";
+
 
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
@@ -29,10 +36,32 @@ interface TelegramUpdate {
 }
 
 
+const mainKeyboard = {
+  keyboard: [
+    [
+      { text: "💰 Мои финансы" },
+      { text: "📋 История операций" }
+    ],
+    [
+      { text: "💵 Курсы валют" },
+      { text: "₿ Криптовалюты" }
+    ],
+    [
+      { text: "➕ Добавить доход" },
+      { text: "➖ Добавить расход" }
+    ]
+  ],
+  resize_keyboard: true,
+  is_persistent: true
+};
+
+
+
 async function sendMessage(
   env: Env,
   chatId: number,
-  text: string
+  text: string,
+  showKeyboard: boolean = false
 ): Promise<void> {
   const response = await fetch(
     `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
@@ -43,16 +72,23 @@ async function sendMessage(
       },
       body: JSON.stringify({
         chat_id: chatId,
-        text: text
+        text: text,
+        ...(showKeyboard
+          ? { reply_markup: mainKeyboard }
+          : {})
       })
     }
   );
 
   if (!response.ok) {
-    throw new Error(`Telegram API error: ${response.status}`);
+    throw new Error(
+      `Telegram API error: ${response.status}`
+    );
   }
 
-  const result = await response.json() as { ok: boolean };
+  const result = await response.json() as {
+    ok: boolean
+  };
 
   if (!result.ok) {
     throw new Error("Telegram rejected the message");
@@ -87,10 +123,24 @@ async function handleTelegram(
   }
 
 
+
 const chatId = message.chat.id;
 
-const command = message.text.trim().split(/\s+/)[0]
-  .split("@")[0].toLowerCase();
+const messageText = message.text.trim();
+
+const buttonCommands: Record<string, string> = {
+  "💰 Мои финансы": "/balance",
+  "📋 История операций": "/history",
+  "💵 Курсы валют": "/rates",
+  "₿ Криптовалюты": "/crypto",
+  "➕ Добавить доход": "/add_income",
+  "➖ Добавить расход": "/add_expense"
+};
+
+const command =
+  buttonCommands[messageText] ??
+  messageText.split(/\s+/)[0]
+    .split("@")[0].toLowerCase();
 
 // Регистрируем пользователя или обновляем его данные
 if (message.from) {
@@ -269,7 +319,119 @@ if (command === "/delete") {
   return new Response("OK");
 }
 
+
+if (command === "/add_income" || command === "/add_expense") {
+  if (!message.from) {
+    return new Response("Sender not found", { status: 400 });
+  }
+
+  const type =
+    command === "/add_income" ? "income" : "expense";
+
+  const started = await startSession(
+    env.DB,
+    message.from.id,
+    type
+  );
+
+  await sendMessage(
+    env,
+    chatId,
+    started
+      ? `💰 Введи сумму ${type === "income" ? "дохода" : "расхода"} в рублях.\n\n` +
+        "Например: 350\n\n" +
+        "Для отмены отправь /cancel."
+      : "❌ Не удалось начать добавление операции."
+  );
+
+  return new Response("OK");
+}
+
+
+if (command === "/cancel") {
+  if (message.from) {
+    await cancelSession(env.DB, message.from.id);
+  }
+
+  await sendMessage(
+    env,
+    chatId,
+    "❌ Добавление операции отменено."
+  );
+
+  return new Response("OK");
+}
+
+
+if (
+  message.from &&
+  !messageText.startsWith("/") &&
+  !Object.prototype.hasOwnProperty.call(buttonCommands, messageText)
+) {
+  const session = await getSession(
+    env.DB,
+    message.from.id
+  );
+
+  if (session?.step === "waiting_amount") {
+    const amountText = messageText.replace(",", ".");
+
+    if (!/^\d+(?:\.\d{1,2})?$/.test(amountText)) {
+      await sendMessage(
+        env,
+        chatId,
+        "⚠️ Введи корректную сумму.\nНапример: 350 или 350.50"
+      );
+      return new Response("OK");
+    }
+
+    const amount = Number(amountText);
+    const amountMinor = Math.round(amount * 100);
+
+    if (
+      amount <= 0 ||
+      !Number.isSafeInteger(amountMinor)
+    ) {
+      await sendMessage(
+        env,
+        chatId,
+        "⚠️ Сумма должна быть положительным числом."
+      );
+      return new Response("OK");
+    }
+
+    const saved = await setSessionAmount(
+      env.DB,
+      message.from.id,
+      amountMinor
+    );
+
+    await sendMessage(
+      env,
+      chatId,
+      saved
+        ? `✅ Сумма ${amount.toLocaleString("ru-RU")} ₽ принята!\n\n` +
+          "Следующий шаг — выбор категории."
+        : "❌ Не удалось сохранить сумму."
+    );
+
+    return new Response("OK");
+  }
+}
+
+
   switch (command) {
+    case "/start":
+    reply =
+      `Привет, ${message.from?.first_name || "друг"}! 👋\n\n` +
+      "Добро пожаловать в FinTrack! 💰\n\n" +
+      "Здесь ты сможешь:\n" +
+      "💵 Отслеживать курсы валют\n" +
+      "₿ Следить за криптовалютами\n" +
+      "📊 Учитывать доходы и расходы\n\n" +
+      "Используй кнопки меню ниже 👇";
+    break;
+
     case "/help":
   reply =
     "📋 Команды FinTrack:\n\n" +
@@ -293,17 +455,18 @@ if (command === "/delete") {
       reply = "₿ Модуль криптовалют в разработке!";
       break;
 
-    case "/balance":
-      reply = "📊 Учёт финансов скоро будет доступен!";
-      break;
-
     default:
       reply = "Неизвестная команда. Отправь /help";
   }
 
-  await sendMessage(env, chatId, reply);
+  await sendMessage(
+  env,
+  chatId,
+  reply,
+  command === "/start"
+);
 
-  return new Response("OK");
+return new Response("OK");
 }
 
 export default {
