@@ -1,10 +1,13 @@
 import { registerUser, type TelegramUser } from "./db";
 
+
 import {
   addTransaction,
   getTransactionSummary,
+  getTransactionHistory,
   type TransactionType
 } from "./transactions";
+
 
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
@@ -179,6 +182,50 @@ if (command === "/balance") {
   return new Response("OK");
 }
 
+if (command === "/history") {
+  if (!message.from) {
+    return new Response("Sender not found", { status: 400 });
+  }
+
+  const transactions = await getTransactionHistory(
+    env.DB,
+    message.from.id
+  );
+
+  if (transactions.length === 0) {
+    await sendMessage(
+      env,
+      chatId,
+      "📋 История операций пока пуста."
+    );
+
+    return new Response("OK");
+  }
+
+  const lines = transactions.map((transaction) => {
+    const isIncome = transaction.type === "income";
+    const icon = isIncome ? "🟢" : "🔴";
+    const sign = isIncome ? "+" : "−";
+
+    const amount = (transaction.amount_minor / 100)
+      .toLocaleString("ru-RU");
+
+    return (
+      `${icon} #${transaction.id} · ` +
+      `${sign}${amount} ${transaction.currency} · ` +
+      transaction.category
+    );
+  });
+
+  const reply =
+    "📋 Последние 10 операций:\n\n" +
+    lines.join("\n");
+
+  await sendMessage(env, chatId, reply);
+
+  return new Response("OK");
+}
+
   switch (command) {
     case "/help":
   reply =
@@ -190,18 +237,9 @@ if (command === "/balance") {
     "💰 Личные финансы:\n" +
     "/expense 350 Продукты — Добавить расход\n" +
     "/income 25000 Зарплата — Добавить доход\n" +
-    "/balance — Финансовая сводка";
+    "/balance — Финансовая сводка\n" +
+    "/history — Последние 10 операций";
      break;
-
-    case "/help":
-      reply =
-        "📋 Команды FinTrack:\n\n" +
-        "/start — Главное меню\n" +
-        "/help — Помощь\n" +
-        "/rates — Курсы валют\n" +
-        "/crypto — Криптовалюты\n" +
-        "/balance — Личные финансы";
-      break;
 
     case "/rates":
       reply = "💵 Модуль курсов валют скоро появится!";

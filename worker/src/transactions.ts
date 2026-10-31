@@ -97,3 +97,38 @@ export async function getTransactionSummary(
     balance: (income - expense) / 100
   };
 }
+
+
+export interface TransactionRecord {
+  id: number;
+  type: TransactionType;
+  amount_minor: number;
+  currency: string;
+  category: string;
+  created_at: string;
+}
+
+export async function getTransactionHistory(
+  db: D1Database,
+  telegramId: number,
+  limit: number = 10
+): Promise<TransactionRecord[]> {
+  const result = await db.prepare(`
+    SELECT
+      t.id,
+      t.type,
+      t.amount_minor,
+      t.currency,
+      t.category,
+      t.created_at
+    FROM transactions t
+    INNER JOIN users u ON t.user_id = u.id
+    WHERE u.telegram_id = ?
+    ORDER BY t.created_at DESC, t.id DESC
+    LIMIT ?
+  `)
+    .bind(telegramId, Math.min(Math.max(limit, 1), 50))
+    .all<TransactionRecord>();
+
+  return result.results;
+}
