@@ -1,3 +1,4 @@
+import { validateTelegramInitData } from "./auth";
 import { registerUser, type TelegramUser } from "./db";
 
 import {
@@ -754,6 +755,64 @@ return new Response("OK");
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "https://fintrack-app-4tt.pages.dev",
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Vary": "Origin"
+    };
+
+    // Браузер предварительно проверяет разрешение на запрос.
+    if (url.pathname === "/api/me" && request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders
+      });
+    }
+    // Авторизация пользователя Telegram Mini App
+    if (url.pathname === "/api/me") {
+      if (request.method !== "GET") {
+        return new Response("Method not allowed", {
+          status: 405,
+          headers: { ...corsHeaders, Allow: "GET" }
+        });
+      }
+
+      const initData = request.headers
+        .get("Authorization")
+        ?.replace(/^tma\s+/i, "");
+
+      if (!initData) {
+        return Response.json(
+        { error: "Telegram authorization required" },
+        { status: 401, headers: corsHeaders }
+        );
+      }
+
+      const user = await validateTelegramInitData(
+        initData,
+        env.TELEGRAM_BOT_TOKEN
+      );
+
+      if (!user) {
+        return Response.json(
+        { error: "Invalid or expired Telegram authorization" },
+        { status: 401, headers: corsHeaders }
+       );
+        
+      }
+
+      return Response.json(
+      {
+      id: user.id,
+      first_name: user.first_name,
+      username: user.username ?? null
+      },
+      { headers: corsHeaders }
+      );
+    }
+
 
     if (url.pathname === "/health" &&
         request.method === "GET") {
