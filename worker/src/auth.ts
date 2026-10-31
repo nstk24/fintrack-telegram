@@ -67,11 +67,10 @@ export async function validateTelegramInitData(
     const entries: [string, string][] = [];
 
     params.forEach((value, key) => {
-     if (key !== "hash" && key !== "signature") {
+    if (key !== "hash") {
     entries.push([key, value]);
-     }
-    });
-
+    }
+   });
 const dataCheckString = entries
   .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
   .map(([key, value]) => `${key}=${value}`)
