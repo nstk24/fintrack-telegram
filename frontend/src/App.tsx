@@ -1,5 +1,10 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  authenticateTelegramUser,
+  type AuthenticatedUser
+} from "./telegram";
+
 import {
   House,
   Wallet,
@@ -92,6 +97,37 @@ function TransactionIcon({ name }: { name: string }) {
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("home");
 
+  const [telegramUser, setTelegramUser] =
+    useState<AuthenticatedUser | null>(null);
+
+  const [authStatus, setAuthStatus] = useState(
+    "Проверяем авторизацию..."
+  );
+
+  useEffect(() => {
+    let active = true;
+
+    authenticateTelegramUser()
+      .then((user) => {
+        if (!active) return;
+        setTelegramUser(user);
+        setAuthStatus("Telegram подтверждён");
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setAuthStatus(
+          error instanceof Error
+            ? error.message
+            : "Ошибка авторизации"
+        );
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+
   const income = transactions
     .filter((t) => t.type === "income")
     .reduce((sum, t) => sum + t.amount, 0);
@@ -160,8 +196,14 @@ function App() {
         {activeTab === "home" && (
           <>
             <div className="greeting">
-              <h2>Обзор финансов</h2>
-              <p>Демонстрационные данные · Октябрь 2026</p>
+              <h2>
+                {telegramUser
+                  ? `Привет, ${telegramUser.first_name}! 👋`
+                  : "Обзор финансов"}                
+                
+                </h2>
+              <p>{authStatus}</p>
+              <p>Финансовые данные пока демонстрационные</p>
             </div>
 
             <section className="balance-card">
